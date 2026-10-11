@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://docs.google.com https://*.googleusercontent.com; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Fantasy Laps</title>
+<style>
+:root{
+  --bg:#06140d; --bg2:#0b2217; --card:#0f2d1e; --line:#1d4a33;
+  --text:#e8f3ec; --muted:#8fb09d; --gold:#f4c542; --crimson:#d64560; --green:#3ddc84;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; color:var(--text);
+  font-family:system-ui,-apple-system,"Segoe UI",Tahoma,Arial,sans-serif;
+  background:
+    repeating-linear-gradient(90deg,rgba(255,255,255,.015) 0 60px,transparent 60px 120px),
+    radial-gradient(1200px 600px at 50% -10%,#134a2e 0%,var(--bg) 60%);
+  background-color:var(--bg); min-height:100vh;
+}
+header{padding:28px 16px 10px; text-align:center}
+h1{margin:0; font-size:2rem; letter-spacing:.5px}
+h1 span{color:var(--gold)}
+.sub{color:var(--muted); font-size:.9rem; margin-top:4px}
+nav{display:flex; justify-content:center; gap:8px; padding:14px 12px; flex-wrap:wrap}
+nav button{
+  background:var(--card); color:var(--text); border:1px solid var(--line);
+  padding:9px 20px; border-radius:999px; font:inherit; cursor:pointer;
+}
+nav button[aria-selected="true"]{background:var(--gold); color:#142; border-color:var(--gold); font-weight:700}
+main{max-width:980px; margin:0 auto; padding:0 12px 60px}
+.status{display:flex; justify-content:space-between; align-items:center; color:var(--muted); font-size:.82rem; margin:4px 4px 10px}
+.status button{background:none; border:1px solid var(--line); color:var(--muted); border-radius:8px; padding:4px 10px; cursor:pointer; font:inherit}
+.wrap{overflow-x:auto; border:1px solid var(--line); border-radius:14px; background:var(--card)}
+table{width:100%; border-collapse:collapse; min-width:560px}
+th,td{padding:10px 12px; text-align:center; white-space:nowrap}
+th{background:var(--bg2); color:var(--muted); font-weight:600; font-size:.8rem; position:sticky; top:0}
+td.team,th.team{text-align:right}
+tbody tr{border-top:1px solid var(--line)}
+tbody tr:hover{background:rgba(255,255,255,.03)}
+td.pos{font-weight:700; width:44px}
+tr.top td.pos{color:var(--gold)}
+tr.top{box-shadow:inset -4px 0 0 var(--gold)}
+tr.bottom td.pos{color:var(--crimson)}
+tr.bottom{box-shadow:inset -4px 0 0 var(--crimson)}
+td.pts{font-weight:800; color:var(--gold)}
+.chips{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px}
+.chips button{background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 12px; cursor:pointer; font:inherit}
+.chips button[aria-pressed="true"]{background:var(--green); color:#032; border-color:var(--green); font-weight:700}
+.match{
+  display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px;
+  background:var(--card); border:1px solid var(--line); border-radius:12px;
+  padding:12px 14px; margin-bottom:8px;
+}
+.match .t{font-weight:600}
+.match .t.home{text-align:right} .match .t.away{text-align:left}
+.score{background:var(--bg2); border:1px solid var(--line); border-radius:10px; padding:6px 14px; font-weight:800; font-size:1.1rem; direction:ltr; white-space:nowrap}
+.win{color:var(--green)}
+.empty,.err{padding:40px 16px; text-align:center; color:var(--muted)}
+.err{color:var(--crimson)}
+@media(max-width:520px){ h1{font-size:1.6rem} th,td{padding:9px 8px} }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fantasy <span>Laps</span></h1>
+  <div class="sub">CAPTAIN FANTASY 2026/2027</div>
+</header>
+
+<nav role="tablist">
+  <button role="tab" data-tab="table" aria-selected="true">الترتيب</button>
+  <button role="tab" data-tab="matches" aria-selected="false">النتائج</button>
+  <button role="tab" data-tab="managers" aria-selected="false">المدراء</button>
+</nav>
+
+<main>
+  <div class="status">
+    <span id="updated">جاري التحميل…</span>
+    <button id="refresh" type="button">تحديث الآن</button>
+  </div>
+  <div id="view"></div>
+</main>
+
+<script>
+"use strict";
+// ================= CONFIG =================
+const SHEET_ID = "1Vph49aLPd_jaezMYwCi2WrlbNhaGv1MAsTCupBkcUlQ"; // must be shared: Anyone with link -> Viewer
+const REFRESH_MS = 60000;
+const BOTTOM_COUNT = 3; // teams highlighted red at the bottom
+const TOP_COUNT = 3;    // teams highlighted gold at the top
+// ==========================================
+
+const state = { tab: "table", gw: null, data: { table: [], matches: [], managers: { gws: [], rows: [] } }, error: null };
+const view = document.getElementById("view");
+
+async function gviz(sheet) {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(sheet)}`;
+  const res = await fetch(url, { cache: "no-store", credentials: "omit" });
+  if (!res.ok) throw new Error(sheet + ": " + res.status);
+  const txt = await res.text();
+  const json = JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1));
+  if (json.status === "error") throw new Error(sheet + ": " + (json.errors && json.errors[0] && json.errors[0].message));
+  return json.table;
+}
+const val = (c) => (c && c.v !== null && c.v !== undefined ? c.v : null);
+const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+
+async function loadTable() {
+  const t = await gviz("League_table");
+  // Script writes: C=rank, D=team, E=P, F=W, G=D, H=L, I=PTS, J=FPL
+  return t.rows.map(r => r.c || []).map(c => ({
+    pos: num(val(c[2])), team: val(c[3]), p: num(val(c[4])), w: num(val(c[5])),
+    d: num(val(c[6])), l: num(val(c[7])), pts: num(val(c[8])), fpl: num(val(c[9]))
+  })).filter(r => r.pos !== null && r.team);
+}
+
+async function loadMatches() {
+  const t = await gviz("Matches");
+  // A=GW, B=home, C=homeScore, D=awayScore, E=away
+  return t.rows.map(r => r.c || []).map(c => ({
+    gw: num(val(c[0])), home: val(c[1]), hs: num(val(c[2])), as: num(val(c[3])), away: val(c[4])
+  })).filter(m => m.gw !== null && m.home && m.away);
+}
+
+async function loadManagers() {
+  const t = await gviz("FPL_Managers");
+  const gwCols = [];
+  t.cols.forEach((col, i) => { const m = /^GW\s*(\d+)$/i.exec(col.label || ""); if (m) gwCols.push({ i, gw: +m[1] }); });
+  const rows = t.rows.map(r => r.c || []).map(c => {
+    const pts = gwCols.map(g => num(val(c[g.i])));
+    return { team: val(c[0]), name: val(c[1]), pts, total: pts.reduce((s, x) => s + (x || 0), 0) };
+  }).filter(r => r.team && r.name);
+  return { gws: gwCols.map(g => g.gw), rows };
+}
+
+// ---------- DOM helpers (textContent only => no HTML injection) ----------
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else e.setAttribute(k, v);
+  }
+  kids.forEach(k => k && e.append(k));
+  return e;
+}
+const td = (text, cls) => el("td", { class: cls || "", text: text === null || text === undefined ? "–" : String(text) });
+
+function renderTable() {
+  const rows = state.data.table;
+  if (!rows.length) return el("div", { class: "empty", text: "ما في بيانات بعد." });
+  const head = el("tr", {}, ...[["#"], ["الفريق", "team"], ["لعب"], ["ف"], ["ت"], ["خ"], ["نقاط"], ["FPL"]]
+    .map(([t, c]) => el("th", { class: c || "", text: t })));
+  const body = el("tbody");
+  rows.forEach((r, i) => {
+    const cls = i < TOP_COUNT ? "top" : (i >= rows.length - BOTTOM_COUNT ? "bottom" : "");
+    body.append(el("tr", { class: cls },
+      td(r.pos, "pos"), td(r.team, "team"), td(r.p), td(r.w), td(r.d), td(r.l), td(r.pts, "pts"), td(r.fpl)));
+  });
+  return el("div", { class: "wrap" }, el("table", {}, el("thead", {}, head), body));
+}
+
+function renderMatches() {
+  const all = state.data.matches;
+  if (!all.length) return el("div", { class: "empty", text: "ما في نتائج بعد." });
+  const gws = [...new Set(all.map(m => m.gw))].sort((a, b) => a - b);
+  if (state.gw === null || !gws.includes(state.gw)) state.gw = gws[gws.length - 1];
+  const chips = el("div", { class: "chips" }, ...gws.map(g => {
+    const b = el("button", { type: "button", "aria-pressed": String(g === state.gw), text: "GW " + g });
+    b.addEventListener("click", () => { state.gw = g; render(); });
+    return b;
+  }));
+  const list = el("div");
+  all.filter(m => m.gw === state.gw).forEach(m => {
+    const hw = m.hs !== null && m.as !== null && m.hs > m.as;
+    const aw = m.hs !== null && m.as !== null && m.as > m.hs;
+    list.append(el("div", { class: "match" },
+      el("div", { class: "t home" + (hw ? " win" : ""), text: m.home }),
+      el("div", { class: "score", text: `${m.hs ?? "-"} : ${m.as ?? "-"}` }),
+      el("div", { class: "t away" + (aw ? " win" : ""), text: m.away })));
+  });
+  return el("div", {}, chips, list);
+}
+
+function renderManagers() {
+  const { gws, rows } = state.data.managers;
+  if (!rows.length) return el("div", { class: "empty", text: "ما في بيانات بعد." });
+  const sorted = [...rows].sort((a, b) => b.total - a.total);
+  const head = el("tr", {}, el("th", { text: "#" }), el("th", { class: "team", text: "المدير" }),
+    el("th", { class: "team", text: "الفريق" }), ...gws.map(g => el("th", { text: "GW" + g })), el("th", { text: "المجموع" }));
+  const body = el("tbody");
+  sorted.forEach((r, i) => {
+    body.append(el("tr", {}, td(i + 1, "pos"), td(r.name, "team"), td(r.team, "team"),
+      ...r.pts.map(p => td(p)), td(r.total, "pts")));
+  });
+  return el("div", { class: "wrap" }, el("table", {}, el("thead", {}, head), body));
+}
+
+function render() {
+  document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === state.tab)));
+  view.replaceChildren();
+  if (state.error) { view.append(el("div", { class: "err", text: "تعذّر تحميل البيانات. تأكد إن الشيت مشارك (Anyone with the link → Viewer)." })); return; }
+  view.append(state.tab === "table" ? renderTable() : state.tab === "matches" ? renderMatches() : renderManagers());
+}
+
+async function refresh() {
+  const label = document.getElementById("updated");
+  try {
+    const [table, matches, managers] = await Promise.all([loadTable(), loadMatches(), loadManagers()]);
+    state.data = { table, matches, managers };
+    state.error = null;
+    label.textContent = "آخر تحديث: " + new Date().toLocaleTimeString("ar-JO", { hour: "2-digit", minute: "2-digit" });
+  } catch (e) {
+    console.error(e);
+    state.error = e;
+    label.textContent = "فشل التحديث";
+  }
+  render();
+}
+
+document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => { state.tab = b.dataset.tab; render(); }));
+document.getElementById("refresh").addEventListener("click", refresh);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+refresh();
+</script>
+</body>
+</html>
